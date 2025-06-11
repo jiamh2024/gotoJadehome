@@ -1,4 +1,4 @@
-module jadehome/amz-excel
+module jadehome/ot-results
 
 go 1.23.6
 

@@ -1,0 +1,7 @@
+go 1.24.1
+
+use (
+    ./cmd/cp-header
+    ./cmd/im-header
+    ./cmd/ot-results
+)
