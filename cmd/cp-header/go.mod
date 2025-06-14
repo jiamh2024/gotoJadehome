@@ -1,4 +1,4 @@
-module jadehome/cp-header
+module jadehome/amz-file
 
 go 1.23.6
 
