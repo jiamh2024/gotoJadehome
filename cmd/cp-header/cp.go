@@ -121,6 +121,19 @@ func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newSku string) error {
 	return nil
 }
 
+// 删除数据库中指定国家和SKU的键值数据
+func deleteKeyValuesFromDB(db *sql.DB, countryCode, sku string) error {
+	query := `
+		DELETE FROM amz_pd_kv 
+		WHERE country_code =? AND sku_code =?
+	`
+	_, err := db.Exec(query, countryCode, sku)
+	if err != nil {
+		return fmt.Errorf("删除数据失败: %v", err)
+	}
+	return nil
+}
+
 func main() {
 	// (1) 处理命令行参数
 	if len(os.Args) < 2 {
@@ -336,6 +349,33 @@ func main() {
 		}
 
 		fmt.Println("数据复制成功")
+
+	case "delete":
+		if len(os.Args) < 4 {
+			fmt.Println("使用方法: program delete <国家代码> <SKU>")
+			os.Exit(1)
+		}
+		countryCode := os.Args[2]
+		sku := os.Args[3]
+
+		// 连接数据库
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True",
+			dbUser, dbPassword, dbHost, dbPort, dbName)
+		db, err := sql.Open("mysql", dsn)
+		if err != nil {
+			fmt.Printf("数据库连接失败: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		// 执行删除操作
+		if err := deleteKeyValuesFromDB(db, countryCode, sku); err != nil {
+			fmt.Printf("删除数据失败: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("数据库数据删除成功")
+
 	default:
 		fmt.Println("未知命令，请使用写入、导入或复制命令")
 	}
