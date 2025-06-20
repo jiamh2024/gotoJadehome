@@ -37,7 +37,8 @@ func fetchKeyValuesFromDB(db *sql.DB, countryCode, sku string) (map[string]strin
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
-			return nil, fmt.Errorf("数据解析失败: %v", err)
+			//return nil, fmt.Errorf("数据解析失败: %v", err)
+			value = "" // 如果读取失败，设置值为NULL
 		}
 		result[key] = value
 	}
@@ -83,9 +84,9 @@ func importKeysFromExcelToDB(db *sql.DB, countryCode, sku, excelPath string) err
 }
 
 // 将现有数据库中指定的国家和sku的键值数据复制到另外一个sku上
-func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newSku string) error {
+func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newCode, newSku string) error {
 	query := `
-		SELECT spec_key, spec_value 
+		SELECT spec_key, spec_value, sort_order
 		FROM amz_pd_kv 
 		WHERE country_code =? AND sku_code =?
 	`
@@ -96,7 +97,7 @@ func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newSku string) error {
 	defer rows.Close()
 
 	// 准备插入语句
-	insertStmt, err := db.Prepare("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value) VALUES (?,?,?,?)")
+	insertStmt, err := db.Prepare("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,?,?)")
 	if err != nil {
 		return fmt.Errorf("准备插入语句失败: %v", err)
 	}
@@ -105,10 +106,16 @@ func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newSku string) error {
 	// 遍历查询结果并插入到新的SKU
 	for rows.Next() {
 		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
+		var order int
+		if err := rows.Scan(&key, &value, &order); err != nil {
 			value = "" // 如果读取失败，设置值为NULL
+			order = 0  // 如果读取失败，设置排序为0
+			fmt.Printf("数据读取错误: %v", err)
 		}
-		_, err := insertStmt.Exec(newSku, countryCode, key, value)
+
+		//fmt.Printf("数据读取:%s,%d\n", value, order)
+
+		_, err := insertStmt.Exec(newSku, newCode, key, value, order)
 		if err != nil {
 			return fmt.Errorf("插入新SKU数据失败: %v", err)
 		}
@@ -137,7 +144,7 @@ func deleteKeyValuesFromDB(db *sql.DB, countryCode, sku string) error {
 func main() {
 	// (1) 处理命令行参数
 	if len(os.Args) < 2 {
-		fmt.Println("使用方法: amzfile <write/import/copy> [Excel File] [Country Code] [SKU]...")
+		fmt.Println("使用方法: amzfile <write/import/copy/delete> [Excel File] [Country Code] [SKU]...")
 		os.Exit(1)
 	}
 	command := os.Args[1]
@@ -245,17 +252,17 @@ func main() {
 		}
 
 		// 保存为新文件
-		newFilename := "output.xlsx"
-		if err := f.SaveAs(newFilename); err != nil {
+		//newFilename := "output.xlsx"
+		if err := f.Save(); err != nil {
 			fmt.Printf("保存文件失败: %v\n", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("成功写入 %d 条数据，文件已保存为: %s\n", writeCount, newFilename)
+		fmt.Printf("成功写入 %d 条数据，文件已保存!\n", writeCount)
 
 	case "import":
 		if len(os.Args) < 4 {
-			fmt.Println("使用方法: program import <excel文件名> <国家代码> <SKU>")
+			fmt.Println("使用方法: amz-file import <excel文件名> <国家代码> <SKU>")
 			os.Exit(1)
 		}
 		filename := os.Args[2]
@@ -324,13 +331,14 @@ func main() {
 		}
 
 	case "copy":
-		if len(os.Args) < 5 {
-			fmt.Println("使用方法: program copy <国家代码> <原SKU> <新SKU>")
+		if len(os.Args) < 6 {
+			fmt.Println("使用方法: amz-file copy <源国家代码> <源SKU> <国家代码> <SKU>")
 			os.Exit(1)
 		}
 		countryCode := os.Args[2]
 		sku := os.Args[3]
-		newSku := os.Args[4]
+		newCode := os.Args[4]
+		newSku := os.Args[5]
 
 		// 连接数据库
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True",
@@ -343,7 +351,7 @@ func main() {
 		defer db.Close()
 
 		// 执行复制操作
-		if err := copyKeyValuesInDB(db, countryCode, sku, newSku); err != nil {
+		if err := copyKeyValuesInDB(db, countryCode, sku, newCode, newSku); err != nil {
 			fmt.Printf("复制数据失败: %v\n", err)
 			os.Exit(1)
 		}

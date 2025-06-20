@@ -37,7 +37,8 @@ func fetchKeyValuesFromDB(db *sql.DB, countryCode, sku string) (map[string]strin
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
-			return nil, fmt.Errorf("数据解析失败: %v", err)
+			//return nil, fmt.Errorf("数据解析失败: %v", err)
+			value = "" // 如果解析失败，设置为空字符串
 		}
 		result[key] = value
 	}
@@ -56,7 +57,7 @@ func fetchKeyValuesFromDB(db *sql.DB, countryCode, sku string) (map[string]strin
 func main() {
 	// (1) 处理命令行参数
 	if len(os.Args) < 4 {
-		fmt.Println("使用方法: program <excel文件名> <国家代码> <SKU>")
+		fmt.Println("使用方法: ot <excel文件名> <国家代码> <SKU>")
 		os.Exit(1)
 	}
 	filename := os.Args[1]

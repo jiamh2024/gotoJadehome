@@ -1,5 +1,4 @@
-module jadehome/ot-results
-
+module jadehome/ot
 go 1.23.6
 
 require (
