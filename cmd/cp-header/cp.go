@@ -54,35 +54,6 @@ func fetchKeyValuesFromDB(db *sql.DB, countryCode, sku string) (map[string]strin
 	return result, nil
 }
 
-// 将Excel文件中指定行的键写入数据库键值表，值为NULL
-func importKeysFromExcelToDB(db *sql.DB, countryCode, sku, excelPath string) error {
-	f, err := excelize.OpenFile(excelPath)
-	if err != nil {
-		return fmt.Errorf("打开Excel文件失败: %v", err)
-	}
-	defer f.Close()
-
-	// 假设数据在第一个工作表
-	sheetName := f.GetSheetName(1)
-	rows, err := f.GetRows(sheetName)
-	if err != nil {
-		return fmt.Errorf("读取工作表失败: %v", err)
-	}
-
-	// 假设第一行是表头，从第二行开始读取数据
-	for rowIndex, row := range rows[1:] {
-		if len(row) > 0 {
-			specKey := row[0]
-			_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value) VALUES (?,?,?,NULL)", sku, countryCode, specKey)
-			if err != nil {
-				return fmt.Errorf("插入数据失败1: %v:%d", err, rowIndex)
-			}
-		}
-	}
-
-	return nil
-}
-
 // 将现有数据库中指定的国家和sku的键值数据复制到另外一个sku上
 func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newCode, newSku string) error {
 	query := `
@@ -97,7 +68,7 @@ func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newCode, newSku string) err
 	defer rows.Close()
 
 	// 准备插入语句
-	insertStmt, err := db.Prepare("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,?,?)")
+	insertStmt, err := db.Prepare("INSERT IGNORE INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,?,?)")
 	if err != nil {
 		return fmt.Errorf("准备插入语句失败: %v", err)
 	}
@@ -215,7 +186,7 @@ func main() {
 		// 创建列名映射（第三行作为列名）
 		columnMap := make(map[string]string)
 		for idx, col := range cols {
-			colName := strings.TrimSpace(col[2])
+			colName := strings.TrimSpace(col[4])
 			fmt.Printf("Col Name: %v\n", colName)
 			if colName != "" {
 				columnName, _ := excelize.ColumnNumberToName(idx + 1)
@@ -223,7 +194,7 @@ func main() {
 			}
 		}
 
-		// 写入数据到对应列
+		// 获取数据库数据
 		writeCount := 0
 		data, err := fetchKeyValuesFromDB(db, countryCode, sku)
 		if err != nil {
@@ -231,10 +202,19 @@ func main() {
 			os.Exit(1)
 		}
 
+		//os.Exit(1)
+
+		// 在main函数的write命令分支中修改数据写入循环
 		for key, value := range data {
 			col, exists := columnMap[key]
 			if !exists {
 				fmt.Printf("警告: 列 %s 不存在\n", key)
+				continue
+			}
+
+			// 新增检查：如果value为空字符串，则跳过写入
+			if value == "" || value == "null" {
+				fmt.Printf("跳过空值: %s\n", key)
 				continue
 			}
 
@@ -314,16 +294,18 @@ func main() {
 
 		// 遍历行和列读取单元格数据并写入数据库
 		fmt.Printf("读取 %d 行模板数据\n", len(rows)-1)
-		fmt.Printf("rows[2]: %s \n", rows[2])
+		fmt.Printf("sku_code, country_code: %s,%s \n", sku, countryCode)
+		//fmt.Printf("rows[4]: %s \n", rows[3])
 
-		if len(rows) < 2 {
+		if len(rows) < 4 {
 			fmt.Println("Excel文件中没有数据")
 			os.Exit(1)
 		}
 
-		for sidx, key := range rows[2] {
+		for sidx, key := range rows[4] {
 			specKey := key
-			_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value) VALUES (?,?,?,NULL)", sku, countryCode, specKey)
+			//_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value) VALUES (?,?,?,NULL)", sku, countryCode, specKey)
+			_, err := db.Query("INSERT IGNORE INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value) VALUES (?,?,?,NULL)", sku, countryCode, specKey)
 			if err != nil {
 				fmt.Printf("插入数据失败: %v:%d\n", err, sidx)
 				os.Exit(1)
