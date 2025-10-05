@@ -54,7 +54,7 @@ func fetchKeyValuesFromDB(db *sql.DB, countryCode, sku string) (map[string]strin
 	return result, nil
 }
 
-// 将Excel文件中指定行的键写入数据库键值表，值为NULL
+// 将Excel文件中指定行的每个列的数据写入数据库键值表，值为NULL，sort_order使用列号(从1开始)
 func importKeysFromExcelToDB(db *sql.DB, countryCode, sku, excelPath string) error {
 	f, err := excelize.OpenFile(excelPath)
 	if err != nil {
@@ -62,21 +62,42 @@ func importKeysFromExcelToDB(db *sql.DB, countryCode, sku, excelPath string) err
 	}
 	defer f.Close()
 
-	// 假设数据在第一个工作表
-	sheetName := f.GetSheetName(1)
+	// 定位到template工作表
+	const sheetName = "template"
+	index, _ := f.GetSheetIndex(sheetName)
+	if index == -1 {
+		return fmt.Errorf("工作表 %s 不存在", sheetName)
+	}
+
 	rows, err := f.GetRows(sheetName)
 	if err != nil {
 		return fmt.Errorf("读取工作表失败: %v", err)
 	}
 
-	// 假设第一行是表头，从第二行开始读取数据
-	for rowIndex, row := range rows[1:] {
-		if len(row) > 0 {
-			specKey := row[0]
-			_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value) VALUES (?,?,?,NULL)", sku, countryCode, specKey)
-			if err != nil {
-				return fmt.Errorf("插入数据失败1: %v:%d", err, rowIndex)
-			}
+	// 确定数据起始行
+	// 默认使用老模板（数据从第3行开始，索引为2）
+	startRowIndex := 2
+
+	// 检查是否为新模板（第4行第一格的值是"SKU"）
+	// 确保Excel文件至少有4行数据
+	if len(rows) > 3 && len(rows[3]) > 0 && strings.TrimSpace(rows[3][0]) == "SKU" {
+		// 新模板，数据从第5行开始（索引为4）
+		startRowIndex = 4
+	}
+
+	// 遍历该行的每个列
+	for colIndex, cellValue := range rows[startRowIndex] {
+		// 跳过空单元格
+		if strings.TrimSpace(cellValue) == "" {
+			continue
+		}
+
+		// 将每个列的数据作为spec_key插入数据库，列号作为sort_order
+		specKey := cellValue
+		sortOrder := colIndex + 1 // 排序从1开始
+		_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,NULL,?)", sku, countryCode, specKey, sortOrder)
+		if err != nil {
+			return fmt.Errorf("插入数据失败: %v:行索引-%d:列索引-%d:值-%s", err, startRowIndex, colIndex, specKey)
 		}
 	}
 
@@ -261,7 +282,7 @@ func main() {
 		fmt.Printf("成功写入 %d 条数据，文件已保存!\n", writeCount)
 
 	case "import":
-		if len(os.Args) < 4 {
+		if len(os.Args) < 5 {
 			fmt.Println("使用方法: amz-file import <excel文件名> <国家代码> <SKU>")
 			os.Exit(1)
 		}
@@ -285,50 +306,13 @@ func main() {
 			os.Exit(1)
 		}
 
-		// 打开Excel文件
-		f, err := excelize.OpenFile(filename)
-		if err != nil {
-			fmt.Printf("打开Excel文件失败: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() {
-			if err := f.Close(); err != nil {
-				fmt.Printf("关闭文件失败: %v\n", err)
-			}
-		}()
-
-		// 定位到template工作表
-		const sheetName = "template"
-		index, _ := f.GetSheetIndex(sheetName)
-		if index == -1 {
-			fmt.Printf("工作表 %s 不存在\n", sheetName)
+		// 使用修改后的importKeysFromExcelToDB函数导入数据
+		if err := importKeysFromExcelToDB(db, countryCode, sku, filename); err != nil {
+			fmt.Printf("导入数据失败: %v\n", err)
 			os.Exit(1)
 		}
 
-		// 读取工作表的所有行
-		rows, err := f.GetRows(sheetName)
-		if err != nil {
-			fmt.Printf("读取工作表失败: %v\n", err)
-			os.Exit(1)
-		}
-
-		// 遍历行和列读取单元格数据并写入数据库
-		fmt.Printf("读取 %d 行模板数据\n", len(rows)-1)
-		fmt.Printf("rows[2]: %s \n", rows[2])
-
-		if len(rows) < 2 {
-			fmt.Println("Excel文件中没有数据")
-			os.Exit(1)
-		}
-
-		for sidx, key := range rows[2] {
-			specKey := key
-			_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value) VALUES (?,?,?,NULL)", sku, countryCode, specKey)
-			if err != nil {
-				fmt.Printf("插入数据失败: %v:%d\n", err, sidx)
-				os.Exit(1)
-			}
-		}
+		fmt.Println("数据导入成功")
 
 	case "copy":
 		if len(os.Args) < 6 {
