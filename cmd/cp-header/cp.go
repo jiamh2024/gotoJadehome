@@ -118,7 +118,7 @@ func copyKeyValuesInDB(db *sql.DB, countryCode, sku, newCode, newSku string) err
 	defer rows.Close()
 
 	// 准备插入语句
-	insertStmt, err := db.Prepare("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,?,?)")
+	insertStmt, err := db.Prepare("INSERT IGNORE INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,?,?)")
 	if err != nil {
 		return fmt.Errorf("准备插入语句失败: %v", err)
 	}
@@ -236,7 +236,7 @@ func main() {
 		// 创建列名映射（第三行作为列名）
 		columnMap := make(map[string]string)
 		for idx, col := range cols {
-			colName := strings.TrimSpace(col[2])
+			colName := strings.TrimSpace(col[4])
 			fmt.Printf("Col Name: %v\n", colName)
 			if colName != "" {
 				columnName, _ := excelize.ColumnNumberToName(idx + 1)
@@ -244,7 +244,7 @@ func main() {
 			}
 		}
 
-		// 写入数据到对应列
+		// 获取数据库数据
 		writeCount := 0
 		data, err := fetchKeyValuesFromDB(db, countryCode, sku)
 		if err != nil {
@@ -252,10 +252,19 @@ func main() {
 			os.Exit(1)
 		}
 
+		//os.Exit(1)
+
+		// 在main函数的write命令分支中修改数据写入循环
 		for key, value := range data {
 			col, exists := columnMap[key]
 			if !exists {
 				fmt.Printf("警告: 列 %s 不存在\n", key)
+				continue
+			}
+
+			// 新增检查：如果value为空字符串，则跳过写入
+			if value == "" || value == "null" {
+				fmt.Printf("跳过空值: %s\n", key)
 				continue
 			}
 
