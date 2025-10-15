@@ -236,7 +236,11 @@ func main() {
 		// 创建列名映射（第三行作为列名）
 		columnMap := make(map[string]string)
 		for idx, col := range cols {
-			colName := strings.TrimSpace(col[4])
+			// 检查列是否有足够的行数
+			if len(col) < 3 {
+				continue // 跳过没有足够行数的列
+			}
+			colName := strings.TrimSpace(col[2]) // 第三行作为列名（索引为2）
 			fmt.Printf("Col Name: %v\n", colName)
 			if colName != "" {
 				columnName, _ := excelize.ColumnNumberToName(idx + 1)
