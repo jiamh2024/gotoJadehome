@@ -54,7 +54,7 @@ func fetchKeyValuesFromDB(db *sql.DB, countryCode, sku string) (map[string]strin
 	return result, nil
 }
 
-// 将Excel文件中指定行的每个列的数据写入数据库键值表，值为NULL，sort_order使用列号(从1开始)
+// 将Excel文件中指定行的每个列的数据写入数据库键值表，值为下一行或下两行的数据，sort_order使用列号(从1开始)
 func importKeysFromExcelToDB(db *sql.DB, countryCode, sku, excelPath string) error {
 	f, err := excelize.OpenFile(excelPath)
 	if err != nil {
@@ -78,11 +78,15 @@ func importKeysFromExcelToDB(db *sql.DB, countryCode, sku, excelPath string) err
 	// 默认使用老模板（数据从第3行开始，索引为2）
 	startRowIndex := 2
 
+	// 判断是否为新模板
+	isNewTemplate := false
+
 	// 检查是否为新模板（第4行第一格的值是"SKU"）
 	// 确保Excel文件至少有4行数据
 	if len(rows) > 3 && len(rows[3]) > 0 && strings.TrimSpace(rows[3][0]) == "SKU" {
 		// 新模板，数据从第5行开始（索引为4）
 		startRowIndex = 4
+		isNewTemplate = true
 	}
 
 	// 遍历该行的每个列
@@ -95,7 +99,30 @@ func importKeysFromExcelToDB(db *sql.DB, countryCode, sku, excelPath string) err
 		// 将每个列的数据作为spec_key插入数据库，列号作为sort_order
 		specKey := cellValue
 		sortOrder := colIndex + 1 // 排序从1开始
-		_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,NULL,?)", sku, countryCode, specKey, sortOrder)
+
+		// 根据模板类型确定spec_value的值
+		var specValue string
+
+		if isNewTemplate {
+			// 新模板：spec_value为该列下两行的值（索引为startRowIndex+2）
+			if len(rows) > startRowIndex+2 && len(rows[startRowIndex+2]) > colIndex {
+				specValue = strings.TrimSpace(rows[startRowIndex+2][colIndex])
+			} else {
+				// 如果下两行不存在，则设置为空
+				specValue = ""
+			}
+		} else {
+			// 旧模板：spec_value为该列下一行的值（索引为startRowIndex+1）
+			if len(rows) > startRowIndex+1 && len(rows[startRowIndex+1]) > colIndex {
+				specValue = strings.TrimSpace(rows[startRowIndex+1][colIndex])
+			} else {
+				// 如果下一行不存在，则设置为空
+				specValue = ""
+			}
+		}
+
+		// 插入数据库
+		_, err := db.Exec("INSERT INTO amz_pd_kv (sku_code, country_code, spec_key, spec_value, sort_order) VALUES (?,?,?,?,?)", sku, countryCode, specKey, specValue, sortOrder)
 		if err != nil {
 			return fmt.Errorf("插入数据失败: %v:行索引-%d:列索引-%d:值-%s", err, startRowIndex, colIndex, specKey)
 		}
@@ -233,14 +260,29 @@ func main() {
 			os.Exit(1)
 		}
 
-		// 创建列名映射（第三行作为列名）
+		// 判断是否为新模板
+		isNewTemplate := false
+		rows, _ := f.GetRows(sheetName)
+		if len(rows) > 3 && len(rows[3]) > 0 && strings.TrimSpace(rows[3][0]) == "SKU" {
+			isNewTemplate = true
+		}
+
+		// 根据模板类型确定列名所在的行索引
+		colNameRowIndex := 2 // 默认旧模板，第三行（索引2）作为列名
+		if isNewTemplate {
+			colNameRowIndex = 4 // 新模板，第五行（索引4）作为列名
+		}
+
+		fmt.Printf("模板类型: %s, 列名所在行索引: %d\n", map[bool]string{true: "新模板", false: "旧模板"}[isNewTemplate], colNameRowIndex)
+
+		// 创建列名映射
 		columnMap := make(map[string]string)
 		for idx, col := range cols {
 			// 检查列是否有足够的行数
-			if len(col) < 3 {
+			if len(col) <= colNameRowIndex {
 				continue // 跳过没有足够行数的列
 			}
-			colName := strings.TrimSpace(col[2]) // 第三行作为列名（索引为2）
+			colName := strings.TrimSpace(col[colNameRowIndex]) // 使用确定的行作为列名
 			fmt.Printf("Col Name: %v\n", colName)
 			if colName != "" {
 				columnName, _ := excelize.ColumnNumberToName(idx + 1)
